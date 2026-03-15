@@ -46,13 +46,17 @@ def _now() -> str:
 
 
 def _atomic_write(path: Path, content: str):
-    """Write content to path atomically: write tmp → fsync → rename."""
+    """Write content to path atomically: write tmp → fsync → rename → fsync dir."""
     tmp = path.with_suffix(".tmp")
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
     os.write(fd, content.encode())
     os.fsync(fd)
     os.close(fd)
     tmp.rename(path)
+    # fsync parent dir so the rename is durable across power loss
+    dir_fd = os.open(str(path.parent), os.O_RDONLY)
+    os.fsync(dir_fd)
+    os.close(dir_fd)
 
 
 def _quarantine(path: Path, reason: str):
@@ -98,7 +102,11 @@ def load_config() -> GlobalConfig:
     if _config_cache is not None:
         return _config_cache
     if CONFIG_PATH.exists():
-        _config_cache = GlobalConfig.model_validate_json(CONFIG_PATH.read_text())
+        try:
+            _config_cache = GlobalConfig.model_validate_json(CONFIG_PATH.read_text())
+        except Exception as e:
+            _quarantine(CONFIG_PATH, str(e))
+            _config_cache = GlobalConfig()
     else:
         _config_cache = GlobalConfig()
     return _config_cache

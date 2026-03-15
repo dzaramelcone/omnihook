@@ -180,7 +180,9 @@ def reset():
 @app.post("/ctl/machine/reload")
 def reload():
     """Hot-reload handlers.py — new/changed functions become available immediately."""
-    reload_handlers()
+    err = _safe_reload()
+    if err:
+        return JSONResponse({"error": f"reload failed: {err}"}, 422)
     return {"registry": sorted(REGISTRY), "machine": snapshot()}
 
 
