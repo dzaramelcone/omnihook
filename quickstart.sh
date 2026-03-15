@@ -74,8 +74,8 @@ disown
 for _ in $(seq 1 40); do
     if curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
         echo "==> omnihook running on :$PORT"
-        echo "==> Launching Claude Code..."
-        exec claude
+        echo "==> Open Claude Code in any project directory. Hooks are active."
+        exit 0
     fi
     sleep 0.25
 done
