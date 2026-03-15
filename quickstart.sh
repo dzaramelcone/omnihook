@@ -64,6 +64,14 @@ echo "==> Pre-building environment..."
 cd "$INSTALL_DIR"
 uv sync --quiet
 
+echo "==> Installing CLI..."
+mkdir -p "$HOME/.local/bin"
+cat > "$HOME/.local/bin/omnihook" << CLIEOF
+#!/usr/bin/env bash
+exec uv run --project "$INSTALL_DIR" omnihook "\$@"
+CLIEOF
+chmod +x "$HOME/.local/bin/omnihook"
+
 echo "==> Starting omnihook..."
 
 mkdir -p "$HOME/.claude/omnihook"

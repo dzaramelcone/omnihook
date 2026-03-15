@@ -81,6 +81,9 @@ def greet(session: SessionState, inp: HookInput) -> tuple[str | None, dict]:
     session.data["greeted"] = True
     return None, {
         "systemMessage": (
-            "[omnihook] hooks active — `omnihook status` | `omnihook disable` | `omnihook machine`"
+            "[omnihook] Hook server running. "
+            "The `omnihook` CLI is available in Bash. Commands: "
+            "omnihook status, omnihook disable, omnihook enable, omnihook machine. "
+            "To disable hooks, run: omnihook disable"
         ),
     }

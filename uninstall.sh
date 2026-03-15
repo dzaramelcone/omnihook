@@ -82,10 +82,10 @@ _clean_settings ".claude/settings.local.json" "project local"
 echo "==> Removing state directory..."
 rm -rf "$STATE_DIR" && echo "    Removed $STATE_DIR"
 
+echo "==> Removing CLI..."
+rm -f "$HOME/.local/bin/omnihook" && echo "    Removed ~/.local/bin/omnihook"
+
 echo "==> Removing source..."
 rm -rf "$INSTALL_DIR" && echo "    Removed $INSTALL_DIR"
-
-echo "==> Uninstalling package..."
-pip uninstall -y omnihook 2>/dev/null || uv pip uninstall omnihook 2>/dev/null || true
 
 echo "==> Done. omnihook fully removed."
