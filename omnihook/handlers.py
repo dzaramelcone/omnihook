@@ -15,7 +15,7 @@ from .models import HookInput, SessionState
 
 # --- Guard patterns ---
 
-_SECRETS = re.compile(r"(\.env|\.pem|\.key|credentials|secrets)$")
+_SECRETS = re.compile(r"(\.env|\.pem|\.key|credentials|secrets)")
 
 
 # --- Shared / stateless handlers ---
@@ -86,3 +86,5 @@ def greet(session: SessionState, inp: HookInput) -> tuple[str | None, dict]:
             "`omnihook machine` to see the state machine."
         ),
     }
+
+

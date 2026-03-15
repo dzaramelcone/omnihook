@@ -260,17 +260,10 @@ def post_handler(body: dict):
     if err:
         return JSONResponse({"error": err}, 422)
 
-    # Atomic: build new content, write via atomic_write, reload, rollback on failure
-    backup = _HANDLERS_PATH.read_text()
-    new_content = backup.rstrip() + "\n\n\n" + source.strip() + "\n"
-    _atomic_write_path(_HANDLERS_PATH, new_content)
-
-    err = _safe_reload()
+    new_content = _HANDLERS_PATH.read_text().rstrip() + "\n\n\n" + source.strip() + "\n"
+    err = _write_handlers_and_reload(new_content)
     if err:
-        _atomic_write_path(_HANDLERS_PATH, backup)
-        _safe_reload()
         return JSONResponse({"error": f"reload failed, rolled back: {err}"}, 422)
-
     return {"added": name, "registry": sorted(REGISTRY)}
 
 
@@ -302,17 +295,25 @@ def delete_handler_source(name: str):
                 end -= 1
             break
 
-    backup = source
     kept = lines[:start] + lines[end:]
-    _atomic_write_path(_HANDLERS_PATH, "".join(kept))
+    err = _write_handlers_and_reload("".join(kept))
+    if err:
+        return JSONResponse({"error": f"reload failed, rolled back: {err}"}, 422)
+    return {"removed": name, "registry": sorted(REGISTRY)}
 
+
+def _write_handlers_and_reload(new_content: str) -> str | None:
+    """Atomically write new handler source and reload. Rolls back on failure.
+
+    Returns error string or None on success.
+    """
+    backup = _HANDLERS_PATH.read_text()
+    _atomic_write_path(_HANDLERS_PATH, new_content)
     err = _safe_reload()
     if err:
         _atomic_write_path(_HANDLERS_PATH, backup)
         _safe_reload()
-        return JSONResponse({"error": f"reload failed, rolled back: {err}"}, 422)
-
-    return {"removed": name, "registry": sorted(REGISTRY)}
+    return err
 
 
 def _safe_reload() -> str | None:

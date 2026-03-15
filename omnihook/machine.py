@@ -137,22 +137,21 @@ def _fn_to_name_map() -> dict[int, str]:
     return {id(fn): name for name, fn in REGISTRY.items()}
 
 
-def snapshot() -> dict[str, dict[str, str]]:
-    """Return MACHINE as {state: {event: handler_name}} for introspection."""
+def _snapshot_of(mapping: dict[str, dict[str, Handler]]) -> dict[str, dict[str, str]]:
+    """Convert a handler-function dict to a handler-name dict for serialization."""
     m = _fn_to_name_map()
     return {
-        state: {event: m.get(id(fn), "?") for event, fn in handlers.items()}
-        for state, handlers in MACHINE.items()
+        state: {key: m.get(id(fn), "?") for key, fn in handlers.items()}
+        for state, handlers in mapping.items()
     }
+
+
+def snapshot() -> dict[str, dict[str, str]]:
+    return _snapshot_of(MACHINE)
 
 
 def lifecycle_snapshot() -> dict[str, dict[str, str]]:
-    """Return LIFECYCLE as {state: {"on_enter": name, "on_exit": name}}."""
-    m = _fn_to_name_map()
-    return {
-        state: {hook: m.get(id(fn), "?") for hook, fn in hooks.items()}
-        for state, hooks in LIFECYCLE.items()
-    }
+    return _snapshot_of(LIFECYCLE)
 
 
 def _persist():
@@ -165,6 +164,13 @@ def _persist():
 def _safe_resolve(name: str) -> Handler:
     """Resolve a handler name, falling back to passthrough for unknown names."""
     return REGISTRY.get(name, h.passthrough)
+
+
+def _rebuild(target: dict, layout: dict[str, dict[str, str]]):
+    """Rebuild a handler dict from a name-based layout. Unknown names → passthrough."""
+    target.clear()
+    for state, handlers in layout.items():
+        target[state] = {key: _safe_resolve(name) for key, name in handlers.items()}
 
 
 def load_persisted():
@@ -190,17 +196,9 @@ def load_persisted():
         return
 
     if machine_layout is not None:
-        MACHINE.clear()
-        for state, handlers in machine_layout.items():
-            MACHINE[state] = {
-                event: _safe_resolve(name) for event, name in handlers.items()
-            }
+        _rebuild(MACHINE, machine_layout)
     if lifecycle_layout:
-        LIFECYCLE.clear()
-        for state, hooks in lifecycle_layout.items():
-            LIFECYCLE[state] = {
-                hook: _safe_resolve(name) for hook, name in hooks.items()
-            }
+        _rebuild(LIFECYCLE, lifecycle_layout)
 
 
 def set_handler(state: str, event: str, handler_name: str):
@@ -256,12 +254,8 @@ def reset_machine():
     from .store import clear_machine_layout
 
     reload_handlers()
-    MACHINE.clear()
-    for state, handlers in _DEFAULT_LAYOUT.items():
-        MACHINE[state] = {event: _resolve(name) for event, name in handlers.items()}
-    LIFECYCLE.clear()
-    for state, hooks in _DEFAULT_LIFECYCLE.items():
-        LIFECYCLE[state] = {hook: _resolve(name) for hook, name in hooks.items()}
+    _rebuild(MACHINE, _DEFAULT_LAYOUT)
+    _rebuild(LIFECYCLE, _DEFAULT_LIFECYCLE)
     clear_machine_layout()
 
 
@@ -276,13 +270,5 @@ def reload_handlers():
     importlib.reload(h)
     REGISTRY.clear()
     REGISTRY.update(_scan_handlers())
-    MACHINE.clear()
-    for state, handlers in current_machine.items():
-        MACHINE[state] = {}
-        for event, name in handlers.items():
-            MACHINE[state][event] = REGISTRY.get(name, h.passthrough)
-    LIFECYCLE.clear()
-    for state, hooks in current_lifecycle.items():
-        LIFECYCLE[state] = {}
-        for hook, name in hooks.items():
-            LIFECYCLE[state][hook] = REGISTRY.get(name, h.passthrough)
+    _rebuild(MACHINE, current_machine)
+    _rebuild(LIFECYCLE, current_lifecycle)
