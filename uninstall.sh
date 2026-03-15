@@ -7,8 +7,6 @@ PORT="${OMNIHOOK_PORT:-9100}"
 PID_FILE="$HOME/.claude/omnihook/omnihook.pid"
 INSTALL_DIR="$HOME/.claude/omnihook-src"
 STATE_DIR="$HOME/.claude/omnihook"
-HOOKS_DIR=".claude/hooks"
-SETTINGS=".claude/settings.json"
 
 echo "==> Stopping omnihook..."
 
@@ -21,58 +19,68 @@ fi
 # Also check port
 lsof -ti:"$PORT" 2>/dev/null | xargs kill 2>/dev/null || true
 
-echo "==> Removing hooks config from $SETTINGS..."
+# --- Clean omnihook entries from settings files ---
 
-if [[ -f "$SETTINGS" ]]; then
-    python3 -c "
-import json
+_clean_settings() {
+    local settings_file="$1"
+    local label="$2"
+    [[ -f "$settings_file" ]] || return 0
+
+    python3 - "$settings_file" "$PORT" <<'PYEOF'
+import json, sys
 from pathlib import Path
 
-p = Path('$SETTINGS')
-s = json.loads(p.read_text())
-port = '$PORT'
-hooks = s.get('hooks', {})
+settings_path = Path(sys.argv[1])
+port = sys.argv[2]
+s = json.loads(settings_path.read_text())
+hooks = s.get("hooks", {})
 changed = False
 
-# Remove any hook entries that point to omnihook
 for event in list(hooks.keys()):
     filtered = []
     for group in hooks[event]:
-        inner = group.get('hooks', [])
+        inner = group.get("hooks", [])
         inner = [h for h in inner if not (
-            h.get('url', '').startswith('http://127.0.0.1:$PORT') or
-            'ensure_omnihook' in h.get('command', '')
+            f"127.0.0.1:{port}" in h.get("url", "") or
+            "ensure_omnihook" in h.get("command", "")
         )]
         if inner:
-            group['hooks'] = inner
+            group["hooks"] = inner
             filtered.append(group)
     if filtered:
         hooks[event] = filtered
-        changed = True
     else:
         del hooks[event]
-        changed = True
+    changed = True
 
-# Remove allowedHttpHookUrls entry
-allowed = s.get('allowedHttpHookUrls', [])
-needle = f'127.0.0.1:{port}'
+allowed = s.get("allowedHttpHookUrls", [])
+needle = f"127.0.0.1:{port}"
 new_allowed = [u for u in allowed if needle not in u]
 if len(new_allowed) != len(allowed):
-    s['allowedHttpHookUrls'] = new_allowed
+    s["allowedHttpHookUrls"] = new_allowed
     changed = True
-if not s.get('allowedHttpHookUrls'):
-    s.pop('allowedHttpHookUrls', None)
+if not s.get("allowedHttpHookUrls"):
+    s.pop("allowedHttpHookUrls", None)
 
 if changed:
-    p.write_text(json.dumps(s, indent=2) + '\n')
-    print('    Cleaned $SETTINGS')
+    settings_path.write_text(json.dumps(s, indent=2) + "\n")
+    print(f"    Cleaned {settings_path}")
 else:
-    print('    No omnihook entries found in $SETTINGS')
-"
-fi
+    print(f"    No omnihook entries in {settings_path}")
+PYEOF
+}
 
-echo "==> Removing launcher hook..."
-rm -f "$HOOKS_DIR/ensure_omnihook.sh" && echo "    Removed $HOOKS_DIR/ensure_omnihook.sh" || true
+echo "==> Removing hooks config..."
+
+# Clean global settings
+_clean_settings "$HOME/.claude/settings.json" "global"
+
+# Clean project settings (CWD)
+_clean_settings ".claude/settings.json" "project"
+_clean_settings ".claude/settings.local.json" "project local"
+
+echo "==> Removing launcher hooks..."
+rm -f ".claude/hooks/ensure_omnihook.sh" 2>/dev/null && echo "    Removed .claude/hooks/ensure_omnihook.sh" || true
 
 echo "==> Removing state directory..."
 rm -rf "$STATE_DIR" && echo "    Removed $STATE_DIR"
