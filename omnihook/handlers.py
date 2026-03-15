@@ -39,7 +39,11 @@ def guard_secrets(session: SessionState, inp: HookInput) -> tuple[str | None, di
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
-                "permissionDecisionReason": f"refusing to access {path} — secrets must not be exposed to the model",
+                "permissionDecisionReason": (
+                    f"refusing to access {path} — secrets must not be exposed to the model. "
+                    "To adjust guards: `omnihook machine` to see handlers, "
+                    "`omnihook disable` to pause all hooks."
+                ),
             }
         }
     return None, {}
@@ -76,9 +80,9 @@ def greet(session: SessionState, inp: HookInput) -> tuple[str | None, dict]:
     session.data["greeted"] = True
     return None, {
         "systemMessage": (
-            "[omnihook] hooks active — "
-            "guards, lint, lifecycle running. "
-            "GET :9100/ctl/status for state, "
-            "POST :9100/ctl/disable to pause."
+            "[omnihook] hooks active — guards, lint, lifecycle running. "
+            "CLI: `omnihook status` to inspect, "
+            "`omnihook disable` to pause, "
+            "`omnihook machine` to see the state machine."
         ),
     }

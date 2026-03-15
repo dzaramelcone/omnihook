@@ -25,7 +25,7 @@ if [[ ! -d "$OMNIHOOK_DIR" ]]; then
     exit 1
 fi
 cd "$OMNIHOOK_DIR"
-nohup uv run python -m omnihook >> "$LOG_FILE" 2>&1 &
+nohup uv run omnihook-server >> "$LOG_FILE" 2>&1 &
 
 # Wait for health (up to 5s)
 for _ in $(seq 1 20); do

@@ -9,7 +9,8 @@ dependencies = [
 ]
 
 [project.scripts]
-omnihook = "omnihook.__main__:main"
+omnihook = "omnihook.cli:main"
+omnihook-server = "omnihook.__main__:main"
 
 [build-system]
 requires = ["hatchling"]

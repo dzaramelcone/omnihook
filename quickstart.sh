@@ -61,7 +61,7 @@ echo "==> Starting omnihook..."
 
 mkdir -p "$HOME/.claude/omnihook"
 cd "$INSTALL_DIR"
-nohup uv run python -m omnihook >> "$HOME/.claude/omnihook/omnihook.log" 2>&1 &
+nohup uv run omnihook-server >> "$HOME/.claude/omnihook/omnihook.log" 2>&1 &
 
 # Wait for health
 for _ in $(seq 1 20); do
