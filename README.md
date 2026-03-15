@@ -33,6 +33,14 @@ python -m omnihook     # starts on :9100
 
 Then copy `example-settings.json` into `.claude/settings.json` and `ensure_omnihook.sh` into `.claude/hooks/`.
 
+### Uninstall
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dzaramelcone/omnihook/main/uninstall.sh | bash
+```
+
+Stops the server, removes hooks from settings, cleans up state and source.
+
 ## Architecture
 
 ```

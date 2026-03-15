@@ -18,8 +18,13 @@ fi
 
 mkdir -p "$(dirname "$LOG_FILE")"
 
-# Start omnihook (detached, survives parent exit)
-cd "${CLAUDE_PROJECT_DIR:-.}"
+# Start omnihook from install dir (detached, survives parent exit)
+OMNIHOOK_DIR="$HOME/.claude/omnihook-src"
+if [[ ! -d "$OMNIHOOK_DIR" ]]; then
+    echo "omnihook not installed — run quickstart.sh first" >&2
+    exit 1
+fi
+cd "$OMNIHOOK_DIR"
 nohup uv run python -m omnihook >> "$LOG_FILE" 2>&1 &
 
 # Wait for health (up to 5s)

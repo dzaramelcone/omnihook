@@ -18,12 +18,7 @@ else
     git clone -q "$REPO" "$INSTALL_DIR"
 fi
 
-# Install into uv global or project
-if command -v uv &>/dev/null; then
-    uv pip install -e "$INSTALL_DIR" 2>/dev/null || pip install -e "$INSTALL_DIR"
-else
-    pip install -e "$INSTALL_DIR"
-fi
+# No global install needed — we run directly from the source via uv
 
 echo "==> Setting up launcher hook..."
 
@@ -64,8 +59,9 @@ settings_path.write_text(json.dumps(existing, indent=2) + '\n')
 
 echo "==> Starting omnihook..."
 
-# Start server
-nohup python3 -m omnihook >> "$HOME/.claude/omnihook/omnihook.log" 2>&1 &
+mkdir -p "$HOME/.claude/omnihook"
+cd "$INSTALL_DIR"
+nohup uv run python -m omnihook >> "$HOME/.claude/omnihook/omnihook.log" 2>&1 &
 
 # Wait for health
 for _ in $(seq 1 20); do
