@@ -143,11 +143,9 @@ def transition(session: SessionState, inp: HookInput) -> tuple[SessionState, dic
     if next_state is not None:
         output = _apply_transition(session, inp, next_state, output)
 
-        # Re-dispatch in new state if the handler only did a transition
-        if next_state != session.state:
-            pass  # state didn't change (same state), skip
-        elif handler in (h.activate, h.passthrough):
-            # The handler's job was just the transition — run the real handler
+        # Re-dispatch: if the handler only did a transition (e.g. activate),
+        # run the real handler in the new state
+        if handler in (h.activate, h.passthrough):
             new_handlers = MACHINE.get(session.state, {})
             real_handler = new_handlers.get(inp.hook_event_name)
             if real_handler and real_handler is not handler:

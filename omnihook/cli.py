@@ -33,6 +33,10 @@ def _req(method: str, path: str, body: dict | None = None) -> dict | str:
     try:
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        print(f"error: {e.code} {body}", file=sys.stderr)
+        sys.exit(1)
     except urllib.error.URLError:
         print(
             f"error: cannot connect to omnihook at {BASE}\n"

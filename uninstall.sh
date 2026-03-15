@@ -47,11 +47,13 @@ for event in list(hooks.keys()):
         if inner:
             group["hooks"] = inner
             filtered.append(group)
+    if filtered != hooks[event]:
+        changed = True
     if filtered:
         hooks[event] = filtered
     else:
         del hooks[event]
-    changed = True
+        changed = True
 
 allowed = s.get("allowedHttpHookUrls", [])
 needle = f"127.0.0.1:{port}"
