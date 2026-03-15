@@ -15,12 +15,15 @@ from fastapi.responses import JSONResponse
 from .machine import (
     REGISTRY,
     add_state,
+    lifecycle_snapshot,
     load_persisted,
     reload_handlers,
     remove_handler,
+    remove_lifecycle,
     remove_state,
     reset_machine,
     set_handler,
+    set_lifecycle,
     snapshot,
     transition,
 )
@@ -121,7 +124,11 @@ def set_rate_limit(limit: RateLimit):
 
 @app.get("/ctl/machine")
 def get_machine():
-    return {"machine": snapshot(), "registry": sorted(REGISTRY)}
+    return {
+        "machine": snapshot(),
+        "lifecycle": lifecycle_snapshot(),
+        "registry": sorted(REGISTRY),
+    }
 
 
 @app.put("/ctl/machine/{state}/{event}")
@@ -164,6 +171,38 @@ def reload():
     """Hot-reload handlers.py — new/changed functions become available immediately."""
     reload_handlers()
     return {"registry": sorted(REGISTRY), "machine": snapshot()}
+
+
+# --- Lifecycle hooks (on_enter / on_exit) ---
+
+
+@app.put("/ctl/lifecycle/{state}/{hook}")
+def put_lifecycle(state: str, hook: str, body: dict):
+    """Set a lifecycle hook: PUT /ctl/lifecycle/active/on_enter {"handler": "my_fn"}"""
+    if hook not in ("on_enter", "on_exit"):
+        return JSONResponse({"error": "hook must be 'on_enter' or 'on_exit'"}, 400)
+    handler_name = body.get("handler", "")
+    if not handler_name:
+        return JSONResponse({"error": "missing 'handler' key"}, 400)
+    set_lifecycle(state, hook, handler_name)
+    return {"state": state, "hook": hook, "handler": handler_name}
+
+
+@app.delete("/ctl/lifecycle/{state}/{hook}")
+def delete_lifecycle_hook(state: str, hook: str):
+    remove_lifecycle(state, hook)
+    return {"removed": f"{state}/{hook}"}
+
+
+@app.delete("/ctl/lifecycle/{state}")
+def delete_lifecycle_state(state: str):
+    remove_lifecycle(state)
+    return {"removed": state}
+
+
+@app.get("/ctl/lifecycle")
+def get_lifecycle():
+    return {"lifecycle": lifecycle_snapshot()}
 
 
 # --- Handler source management ---

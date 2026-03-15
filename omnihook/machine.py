@@ -69,46 +69,87 @@ MACHINE: dict[str, dict[str, Handler]] = {
     for state, handlers in _DEFAULT_LAYOUT.items()
 }
 
+# Lifecycle hooks: {state: {"on_enter": handler, "on_exit": handler}}
+# Fired on state transitions — on_exit(old_state) then on_enter(new_state).
+# Same handler signature as event handlers.
+LIFECYCLE: dict[str, dict[str, Handler]] = {}
+
+_DEFAULT_LIFECYCLE: dict[str, dict[str, str]] = {}
+
 
 def transition(session: SessionState, inp: HookInput) -> tuple[SessionState, dict]:
-    """Execute one state machine step. Returns (updated session, response dict)."""
+    """Execute one state machine step. Returns (updated session, response dict).
+
+    On state change: fires on_exit for the old state, then on_enter for the new.
+    Lifecycle handlers can modify session.data but cannot override the transition
+    or the response — the event handler's output is what gets returned.
+    """
+    old_state = session.state
     state_handlers = MACHINE.get(session.state, {})
     handler = state_handlers.get(inp.hook_event_name, h.passthrough)
     next_state, output = handler(session, inp)
-    if next_state is not None:
+
+    if next_state is not None and next_state != old_state:
+        # Fire on_exit for old state
+        exit_handler = LIFECYCLE.get(old_state, {}).get("on_exit")
+        if exit_handler:
+            exit_handler(session, inp)
         session.state = next_state
+        # Fire on_enter for new state
+        enter_handler = LIFECYCLE.get(next_state, {}).get("on_enter")
+        if enter_handler:
+            enter_handler(session, inp)
+    elif next_state is not None:
+        session.state = next_state
+
     return session, output
 
 
 # --- Runtime mutation ---
 
 
+def _fn_to_name_map() -> dict[int, str]:
+    return {id(fn): name for name, fn in REGISTRY.items()}
+
+
 def snapshot() -> dict[str, dict[str, str]]:
     """Return MACHINE as {state: {event: handler_name}} for introspection."""
-    fn_to_name: dict[int, str] = {id(fn): name for name, fn in REGISTRY.items()}
+    m = _fn_to_name_map()
     return {
-        state: {event: fn_to_name.get(id(fn), "?") for event, fn in handlers.items()}
+        state: {event: m.get(id(fn), "?") for event, fn in handlers.items()}
         for state, handlers in MACHINE.items()
     }
 
 
+def lifecycle_snapshot() -> dict[str, dict[str, str]]:
+    """Return LIFECYCLE as {state: {"on_enter": name, "on_exit": name}}."""
+    m = _fn_to_name_map()
+    return {
+        state: {hook: m.get(id(fn), "?") for hook, fn in hooks.items()}
+        for state, hooks in LIFECYCLE.items()
+    }
+
+
 def _persist():
-    """Persist current machine layout to disk (atomic write)."""
+    """Persist current machine + lifecycle layout to disk (atomic write)."""
     from .store import save_machine_layout
 
-    save_machine_layout(snapshot())
+    save_machine_layout(snapshot(), lifecycle_snapshot())
 
 
 def load_persisted():
-    """Rebuild MACHINE from disk if a saved layout exists. Called on startup."""
+    """Rebuild MACHINE + LIFECYCLE from disk if a saved layout exists."""
     from .store import load_machine_layout
 
-    layout = load_machine_layout()
-    if layout is None:
-        return
-    MACHINE.clear()
-    for state, handlers in layout.items():
-        MACHINE[state] = {event: _resolve(name) for event, name in handlers.items()}
+    machine_layout, lifecycle_layout = load_machine_layout()
+    if machine_layout is not None:
+        MACHINE.clear()
+        for state, handlers in machine_layout.items():
+            MACHINE[state] = {event: _resolve(name) for event, name in handlers.items()}
+    if lifecycle_layout:
+        LIFECYCLE.clear()
+        for state, hooks in lifecycle_layout.items():
+            LIFECYCLE[state] = {hook: _resolve(name) for hook, name in hooks.items()}
 
 
 def set_handler(state: str, event: str, handler_name: str):
@@ -139,14 +180,37 @@ def remove_state(state: str):
     _persist()
 
 
+def set_lifecycle(state: str, hook: str, handler_name: str):
+    """Set a lifecycle hook: hook must be 'on_enter' or 'on_exit'."""
+    reload_handlers()
+    fn = _resolve(handler_name)
+    LIFECYCLE.setdefault(state, {})[hook] = fn
+    _persist()
+
+
+def remove_lifecycle(state: str, hook: str | None = None):
+    """Remove lifecycle hook(s) for a state. If hook is None, remove all."""
+    if state in LIFECYCLE:
+        if hook:
+            LIFECYCLE[state].pop(hook, None)
+            if not LIFECYCLE[state]:
+                del LIFECYCLE[state]
+        else:
+            del LIFECYCLE[state]
+    _persist()
+
+
 def reset_machine():
-    """Reset MACHINE to hardcoded defaults, clearing any persisted overrides."""
+    """Reset MACHINE + LIFECYCLE to hardcoded defaults."""
     from .store import clear_machine_layout
 
     reload_handlers()
     MACHINE.clear()
     for state, handlers in _DEFAULT_LAYOUT.items():
         MACHINE[state] = {event: _resolve(name) for event, name in handlers.items()}
+    LIFECYCLE.clear()
+    for state, hooks in _DEFAULT_LIFECYCLE.items():
+        LIFECYCLE[state] = {hook: _resolve(name) for hook, name in hooks.items()}
     clear_machine_layout()
 
 
@@ -154,16 +218,20 @@ def reload_handlers():
     """Hot-reload handlers.py module and re-scan REGISTRY.
 
     New/changed functions become available immediately. Existing MACHINE
-    entries that reference old function objects are re-linked by name.
+    and LIFECYCLE entries are re-linked by name to fresh function objects.
     """
-    # Snapshot BEFORE reload — old fn objects still match old REGISTRY ids
-    current = snapshot()
+    current_machine = snapshot()
+    current_lifecycle = lifecycle_snapshot()
     importlib.reload(h)
     REGISTRY.clear()
     REGISTRY.update(_scan_handlers())
-    # Re-link MACHINE entries to fresh function objects by name
     MACHINE.clear()
-    for state, handlers in current.items():
+    for state, handlers in current_machine.items():
         MACHINE[state] = {}
         for event, name in handlers.items():
             MACHINE[state][event] = REGISTRY.get(name, h.passthrough)
+    LIFECYCLE.clear()
+    for state, hooks in current_lifecycle.items():
+        LIFECYCLE[state] = {}
+        for hook, name in hooks.items():
+            LIFECYCLE[state][hook] = REGISTRY.get(name, h.passthrough)

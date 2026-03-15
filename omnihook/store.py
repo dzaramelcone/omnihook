@@ -69,16 +69,24 @@ def save_config(config: GlobalConfig):
 # --- Machine layout ---
 
 
-def load_machine_layout() -> dict[str, dict[str, str]] | None:
-    """Load persisted machine layout, or None if no overrides saved."""
-    if MACHINE_PATH.exists():
-        return json.loads(MACHINE_PATH.read_text())
-    return None
+def load_machine_layout() -> tuple[dict | None, dict | None]:
+    """Load persisted machine + lifecycle layout. Returns (machine, lifecycle)."""
+    if not MACHINE_PATH.exists():
+        return None, None
+    data = json.loads(MACHINE_PATH.read_text())
+    # Support both old format (flat dict) and new format ({"machine": ..., "lifecycle": ...})
+    if "machine" in data:
+        return data["machine"], data.get("lifecycle", {})
+    return data, {}
 
 
-def save_machine_layout(layout: dict[str, dict[str, str]]):
+def save_machine_layout(
+    layout: dict[str, dict[str, str]],
+    lifecycle: dict[str, dict[str, str]] | None = None,
+):
     _ensure_dirs()
-    _atomic_write(MACHINE_PATH, json.dumps(layout, indent=2))
+    data = {"machine": layout, "lifecycle": lifecycle or {}}
+    _atomic_write(MACHINE_PATH, json.dumps(data, indent=2))
 
 
 def clear_machine_layout():
