@@ -81,8 +81,7 @@ def transition(session: SessionState, inp: HookInput) -> tuple[SessionState, dic
     """Execute one state machine step. Returns (updated session, response dict).
 
     On state change: fires on_exit for the old state, then on_enter for the new.
-    Lifecycle handlers can modify session.data but cannot override the transition
-    or the response — the event handler's output is what gets returned.
+    All three outputs are merged: event handler | on_exit | on_enter (last wins).
     """
     old_state = session.state
     state_handlers = MACHINE.get(session.state, {})
@@ -90,15 +89,15 @@ def transition(session: SessionState, inp: HookInput) -> tuple[SessionState, dic
     next_state, output = handler(session, inp)
 
     if next_state is not None and next_state != old_state:
-        # Fire on_exit for old state
         exit_handler = LIFECYCLE.get(old_state, {}).get("on_exit")
         if exit_handler:
-            exit_handler(session, inp)
+            _, exit_output = exit_handler(session, inp)
+            output = {**output, **exit_output}
         session.state = next_state
-        # Fire on_enter for new state
         enter_handler = LIFECYCLE.get(next_state, {}).get("on_enter")
         if enter_handler:
-            enter_handler(session, inp)
+            _, enter_output = enter_handler(session, inp)
+            output = {**output, **enter_output}
     elif next_state is not None:
         session.state = next_state
 
