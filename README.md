@@ -27,8 +27,9 @@ Open Claude Code. Hooks are active.
 ### Manual install
 
 ```bash
-pip install omnihook   # or: uv add omnihook
-python -m omnihook     # starts on :9100
+git clone https://github.com/dzaramelcone/omnihook.git ~/.claude/omnihook-src
+cd ~/.claude/omnihook-src
+uv run python -m omnihook   # starts on :9100
 ```
 
 Then copy `example-settings.json` into `.claude/settings.json` and `ensure_omnihook.sh` into `.claude/hooks/`.

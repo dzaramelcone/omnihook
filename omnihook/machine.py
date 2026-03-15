@@ -47,23 +47,7 @@ def _resolve(name: str) -> Handler:
     return REGISTRY[name]
 
 
-MACHINE: dict[str, dict[str, Handler]] = {
-    "idle": {
-        "SessionStart": h.on_session_start,
-        "PreToolUse": h.guard_secrets,
-        "PostToolUse": h.lint_python,
-        "Stop": h.passthrough,
-        "SessionEnd": h.on_session_end,
-    },
-    "active": {
-        "PreToolUse": h.guard_secrets,
-        "PostToolUse": h.lint_python,
-        "Stop": h.passthrough,
-        "SessionEnd": h.on_session_end,
-    },
-}
-
-# Defaults stored as names (not function refs) so reset works after hot-reload
+# Single source of truth — MACHINE is derived from this on startup and reset
 _DEFAULT_LAYOUT: dict[str, dict[str, str]] = {
     "idle": {
         "SessionStart": "on_session_start",
@@ -78,6 +62,11 @@ _DEFAULT_LAYOUT: dict[str, dict[str, str]] = {
         "Stop": "passthrough",
         "SessionEnd": "on_session_end",
     },
+}
+
+MACHINE: dict[str, dict[str, Handler]] = {
+    state: {event: _resolve(name) for event, name in handlers.items()}
+    for state, handlers in _DEFAULT_LAYOUT.items()
 }
 
 

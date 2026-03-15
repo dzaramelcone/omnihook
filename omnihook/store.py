@@ -22,8 +22,15 @@ PID_PATH = STORE_DIR / "omnihook.pid"
 _STALE_HOURS = 24
 
 
+_dirs_ready = False
+
+
 def _ensure_dirs():
+    global _dirs_ready
+    if _dirs_ready:
+        return
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    _dirs_ready = True
 
 
 def _now() -> str:
@@ -55,7 +62,7 @@ def load_config() -> GlobalConfig:
 def save_config(config: GlobalConfig):
     global _config_cache
     _ensure_dirs()
-    CONFIG_PATH.write_text(config.model_dump_json(indent=2))
+    _atomic_write(CONFIG_PATH, config.model_dump_json(indent=2))
     _config_cache = config
 
 
@@ -104,7 +111,10 @@ def delete_session(session_id: str):
 
 def list_sessions() -> list[SessionState]:
     _ensure_dirs()
-    return [SessionState.model_validate_json(p.read_text()) for p in SESSIONS_DIR.glob("*.json")]
+    return [
+        SessionState.model_validate_json(p.read_text())
+        for p in SESSIONS_DIR.glob("*.json")
+    ]
 
 
 def cleanup_stale():

@@ -177,7 +177,10 @@ def _validate_handler_source(source: str) -> tuple[str | None, str]:
     Returns (error, name). On success error is None and name is the function name.
     """
     source = source.strip()
-    parsed = ast.parse(source)
+    try:
+        parsed = ast.parse(source)
+    except SyntaxError as e:
+        return f"syntax error: {e}", ""
     defs = [n for n in parsed.body if isinstance(n, ast.FunctionDef)]
     if len(defs) != 1:
         return f"expected exactly 1 function def, got {len(defs)}", ""
