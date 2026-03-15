@@ -82,26 +82,47 @@ LIFECYCLE: dict[str, dict[str, Handler]] = {
 }
 
 
+def _safe_call(
+    handler: Handler, session: SessionState, inp: HookInput
+) -> tuple[str | None, dict]:
+    """Call a handler with failure containment. On error, return passthrough + error message."""
+    import logging
+
+    try:
+        return handler(session, inp)
+    except Exception as e:
+        fn_name = getattr(handler, "__name__", "?")
+        logging.getLogger("omnihook").error("handler %s raised: %s", fn_name, e)
+        return None, {
+            "systemMessage": (
+                f"[omnihook] handler '{fn_name}' failed: {e}. "
+                "Run `omnihook machine` to inspect, "
+                "`omnihook disable` to pause hooks."
+            ),
+        }
+
+
 def transition(session: SessionState, inp: HookInput) -> tuple[SessionState, dict]:
     """Execute one state machine step. Returns (updated session, response dict).
 
     On state change: fires on_exit for the old state, then on_enter for the new.
     All three outputs are merged: event handler | on_exit | on_enter (last wins).
+    Handler failures are contained — errors return a systemMessage, not a 500.
     """
     old_state = session.state
     state_handlers = MACHINE.get(session.state, {})
     handler = state_handlers.get(inp.hook_event_name, h.passthrough)
-    next_state, output = handler(session, inp)
+    next_state, output = _safe_call(handler, session, inp)
 
     if next_state is not None and next_state != old_state:
         exit_handler = LIFECYCLE.get(old_state, {}).get("on_exit")
         if exit_handler:
-            _, exit_output = exit_handler(session, inp)
+            _, exit_output = _safe_call(exit_handler, session, inp)
             output = {**output, **exit_output}
         session.state = next_state
         enter_handler = LIFECYCLE.get(next_state, {}).get("on_enter")
         if enter_handler:
-            _, enter_output = enter_handler(session, inp)
+            _, enter_output = _safe_call(enter_handler, session, inp)
             output = {**output, **enter_output}
     elif next_state is not None:
         session.state = next_state
@@ -141,19 +162,45 @@ def _persist():
     save_machine_layout(snapshot(), lifecycle_snapshot())
 
 
+def _safe_resolve(name: str) -> Handler:
+    """Resolve a handler name, falling back to passthrough for unknown names."""
+    return REGISTRY.get(name, h.passthrough)
+
+
 def load_persisted():
-    """Rebuild MACHINE + LIFECYCLE from disk if a saved layout exists."""
+    """Rebuild MACHINE + LIFECYCLE from disk if a saved layout exists.
+
+    Unknown handler names fall back to passthrough (not crash).
+    Corrupt machine.json is quarantined.
+    """
+    import logging
+
     from .store import load_machine_layout
 
-    machine_layout, lifecycle_layout = load_machine_layout()
+    try:
+        machine_layout, lifecycle_layout = load_machine_layout()
+    except Exception as e:
+        logging.getLogger("omnihook").error(
+            "corrupt machine.json, using defaults: %s", e
+        )
+        from .store import MACHINE_PATH, _quarantine
+
+        if MACHINE_PATH.exists():
+            _quarantine(MACHINE_PATH, str(e))
+        return
+
     if machine_layout is not None:
         MACHINE.clear()
         for state, handlers in machine_layout.items():
-            MACHINE[state] = {event: _resolve(name) for event, name in handlers.items()}
+            MACHINE[state] = {
+                event: _safe_resolve(name) for event, name in handlers.items()
+            }
     if lifecycle_layout:
         LIFECYCLE.clear()
         for state, hooks in lifecycle_layout.items():
-            LIFECYCLE[state] = {hook: _resolve(name) for hook, name in hooks.items()}
+            LIFECYCLE[state] = {
+                hook: _safe_resolve(name) for hook, name in hooks.items()
+            }
 
 
 def set_handler(state: str, event: str, handler_name: str):

@@ -37,6 +37,7 @@ from .store import (
     load_session,
     save_config,
     save_session,
+    session_lock,
 )
 
 log = logging.getLogger("omnihook")
@@ -57,27 +58,28 @@ def handle_hook(inp: HookInput) -> dict:
     if not config.enabled:
         return {}
 
-    session = load_session(inp.session_id)
-    if not session.enabled:
-        return {}
+    with session_lock(inp.session_id):
+        session = load_session(inp.session_id)
+        if not session.enabled:
+            return {}
 
-    if not check_rate_limit(session, config.rate_limit):
-        save_session(session)
-        return {
-            "systemMessage": (
-                "[omnihook] rate limited — hooks paused until window resets. "
-                "Run `omnihook disable` to turn off hooks, "
-                "or `omnihook rate-limit 120 10` to raise the limit."
-            ),
-        }
+        if not check_rate_limit(session, config.rate_limit):
+            save_session(session)
+            return {
+                "systemMessage": (
+                    "[omnihook] rate limited — hooks paused until window resets. "
+                    "Run `omnihook disable` to turn off hooks, "
+                    "or `omnihook rate-limit 120 10` to raise the limit."
+                ),
+            }
 
-    session, output = transition(session, inp)
+        session, output = transition(session, inp)
 
-    # Persist BEFORE responding (write-ahead)
-    if session.state == "ended":
-        delete_session(session.session_id)
-    else:
-        save_session(session)
+        # Persist BEFORE responding (write-ahead)
+        if session.state == "ended":
+            delete_session(session.session_id)
+        else:
+            save_session(session)
 
     return output
 
@@ -103,17 +105,19 @@ def disable_global():
 
 @app.post("/ctl/enable/{session_id}")
 def enable_session(session_id: str):
-    session = load_session(session_id)
-    session.enabled = True
-    save_session(session)
+    with session_lock(session_id):
+        session = load_session(session_id)
+        session.enabled = True
+        save_session(session)
     return {"session_id": session_id, "enabled": True}
 
 
 @app.post("/ctl/disable/{session_id}")
 def disable_session(session_id: str):
-    session = load_session(session_id)
-    session.enabled = False
-    save_session(session)
+    with session_lock(session_id):
+        session = load_session(session_id)
+        session.enabled = False
+        save_session(session)
     return {"session_id": session_id, "enabled": False}
 
 
@@ -243,6 +247,7 @@ def post_handler(body: dict):
     """POST a handler function. Body: {"source": "def my_fn(session, inp): ..."}
 
     Validates the source, appends it to handlers.py, reloads the module.
+    Rolls back on reload failure.
     """
     source = body.get("source", "")
     if not source:
@@ -252,10 +257,18 @@ def post_handler(body: dict):
     if err:
         return JSONResponse({"error": err}, 422)
 
+    # Backup before modifying
+    backup = _HANDLERS_PATH.read_text()
     with _HANDLERS_PATH.open("a") as f:
         f.write("\n\n" + source.strip() + "\n")
 
-    reload_handlers()
+    err = _safe_reload()
+    if err:
+        # Rollback
+        _HANDLERS_PATH.write_text(backup)
+        _safe_reload()
+        return JSONResponse({"error": f"reload failed, rolled back: {err}"}, 422)
+
     return {"added": name, "registry": sorted(REGISTRY)}
 
 
@@ -269,7 +282,6 @@ def delete_handler_source(name: str):
     tree = ast.parse(source)
     lines = source.splitlines(keepends=True)
 
-    # Find the function def span
     target = None
     for node in tree.body:
         if isinstance(node, ast.FunctionDef) and node.name == name:
@@ -279,22 +291,35 @@ def delete_handler_source(name: str):
     if target is None:
         return JSONResponse({"error": f"handler {name!r} not found"}, 404)
 
-    # Find end line (start of next top-level node, or EOF)
-    start = target.lineno - 1  # 0-indexed
+    start = target.lineno - 1
     end = len(lines)
     for node in tree.body:
         if node.lineno > target.end_lineno:
             end = node.lineno - 1
-            # Trim blank lines between functions
             while end > start and lines[end - 1].strip() == "":
                 end -= 1
             break
 
+    backup = source
     kept = lines[:start] + lines[end:]
     _HANDLERS_PATH.write_text("".join(kept))
 
-    reload_handlers()
+    err = _safe_reload()
+    if err:
+        _HANDLERS_PATH.write_text(backup)
+        _safe_reload()
+        return JSONResponse({"error": f"reload failed, rolled back: {err}"}, 422)
+
     return {"removed": name, "registry": sorted(REGISTRY)}
+
+
+def _safe_reload() -> str | None:
+    """Reload handlers, returning error string on failure or None on success."""
+    try:
+        reload_handlers()
+        return None
+    except Exception as e:
+        return str(e)
 
 
 @app.get("/handlers")
