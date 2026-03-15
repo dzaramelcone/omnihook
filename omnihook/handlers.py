@@ -88,3 +88,37 @@ def greet(session: SessionState, inp: HookInput) -> tuple[str | None, dict]:
     }
 
 
+def slow_promote(session, inp):
+    import time
+    time.sleep(3)
+    session.data["slow_promote_runs"] = session.data.get("slow_promote_runs", 0) + 1
+    return "active", {"systemMessage": "slow promote complete"}
+
+
+def quick_promote(session, inp):
+    session.data["quick_promote_runs"] = session.data.get("quick_promote_runs", 0) + 1
+    return "active", {"systemMessage": "quick promote complete"}
+
+
+def slow_promote(session, inp):
+    import time
+    time.sleep(3)
+    session.data["slow_promote_runs"] = session.data.get("slow_promote_runs", 0) + 1
+    return "active", {"systemMessage": "slow promote complete"}
+
+
+def quick_promote(session, inp):
+    session.data["quick_promote_runs"] = session.data.get("quick_promote_runs", 0) + 1
+    return "active", {"systemMessage": "quick promote complete"}
+
+
+def slow_promote(session, inp):
+    import time
+    time.sleep(3)
+    session.data["slow_promote_runs"] = session.data.get("slow_promote_runs", 0) + 1
+    return "active", {"systemMessage": "slow promote complete"}
+
+
+def quick_promote(session, inp):
+    session.data["quick_promote_runs"] = session.data.get("quick_promote_runs", 0) + 1
+    return "active", {"systemMessage": "quick promote complete"}

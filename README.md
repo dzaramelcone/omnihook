@@ -162,6 +162,23 @@ If omnihook crashes: session state survives on disk. On restart, sessions resume
 
 If Claude Code crashes: session state remains. New session gets a new ID; old sessions are cleaned up after 24h.
 
+## Crash harness
+
+The repo includes live-process crash tests in `tests/test_crash_harness.py`.
+
+They exercise:
+
+- `SIGKILL` + restart preserving session state
+- kill during an in-flight handler, then replay from the last durable checkpoint
+- quarantine and fallback for corrupt session, machine, and config files
+- safe reload behavior for broken `handlers.py`
+
+Run them with:
+
+```bash
+uv run python -m unittest tests.test_crash_harness -v
+```
+
 ## License
 
 MIT
