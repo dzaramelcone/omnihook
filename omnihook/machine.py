@@ -53,10 +53,10 @@ def _resolve(name: str) -> Handler:
 # Single source of truth — MACHINE is derived from this on startup and reset
 _DEFAULT_LAYOUT: dict[str, dict[str, str]] = {
     "idle": {
-        "SessionStart": "on_session_start",
-        "PreToolUse": "guard_secrets",
-        "PostToolUse": "lint_python",
-        "Stop": "passthrough",
+        "SessionStart": "activate",
+        "PreToolUse": "activate",
+        "PostToolUse": "activate",
+        "Stop": "activate",
         "SessionEnd": "on_session_end",
     },
     "active": {
@@ -104,14 +104,33 @@ def _safe_call(
         }
 
 
+def _apply_transition(
+    session: SessionState, inp: HookInput, next_state: str, output: dict
+) -> dict:
+    """Apply a state transition: fire on_exit, update state, fire on_enter, merge outputs."""
+    old_state = session.state
+    if next_state == old_state:
+        session.state = next_state
+        return output
+    exit_handler = LIFECYCLE.get(old_state, {}).get("on_exit")
+    if exit_handler:
+        _, exit_output = _safe_call(exit_handler, session, inp)
+        output = {**output, **exit_output}
+    session.state = next_state
+    enter_handler = LIFECYCLE.get(next_state, {}).get("on_enter")
+    if enter_handler:
+        _, enter_output = _safe_call(enter_handler, session, inp)
+        output = {**output, **enter_output}
+    return output
+
+
 def transition(session: SessionState, inp: HookInput) -> tuple[SessionState, dict]:
     """Execute one state machine step. Returns (updated session, response dict).
 
-    On state change: fires on_exit for the old state, then on_enter for the new.
-    All three outputs are merged: event handler | on_exit | on_enter (last wins).
-    Handler failures are contained — errors return a systemMessage, not a 500.
+    If the handler triggers a state change, lifecycle hooks fire (on_exit → on_enter).
+    After transitioning, the event is re-dispatched in the new state so the correct
+    handler runs (e.g. idle → active, then active's guard_secrets for PreToolUse).
     """
-    old_state = session.state
     state_handlers = MACHINE.get(session.state, {})
     handler = state_handlers.get(inp.hook_event_name)
     if handler is None:
@@ -121,18 +140,19 @@ def transition(session: SessionState, inp: HookInput) -> tuple[SessionState, dic
         handler = h.passthrough
     next_state, output = _safe_call(handler, session, inp)
 
-    if next_state is not None and next_state != old_state:
-        exit_handler = LIFECYCLE.get(old_state, {}).get("on_exit")
-        if exit_handler:
-            _, exit_output = _safe_call(exit_handler, session, inp)
-            output = {**output, **exit_output}
-        session.state = next_state
-        enter_handler = LIFECYCLE.get(next_state, {}).get("on_enter")
-        if enter_handler:
-            _, enter_output = _safe_call(enter_handler, session, inp)
-            output = {**output, **enter_output}
-    elif next_state is not None:
-        session.state = next_state
+    if next_state is not None:
+        output = _apply_transition(session, inp, next_state, output)
+
+        # Re-dispatch in new state if the handler only did a transition
+        if next_state != session.state:
+            pass  # state didn't change (same state), skip
+        elif handler in (h.activate, h.passthrough):
+            # The handler's job was just the transition — run the real handler
+            new_handlers = MACHINE.get(session.state, {})
+            real_handler = new_handlers.get(inp.hook_event_name)
+            if real_handler and real_handler is not handler:
+                _, real_output = _safe_call(real_handler, session, inp)
+                output = {**output, **real_output}
 
     return session, output
 

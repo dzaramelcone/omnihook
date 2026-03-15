@@ -65,7 +65,8 @@ def lint_python(session: SessionState, inp: HookInput) -> tuple[str | None, dict
 # --- Lifecycle handlers ---
 
 
-def on_session_start(session: SessionState, inp: HookInput) -> tuple[str | None, dict]:
+def activate(session: SessionState, inp: HookInput) -> tuple[str | None, dict]:
+    """Transition idle → active. Used as the default handler for all events in idle state."""
     return "active", {}
 
 
