@@ -7,17 +7,7 @@
           {
             "type": "command",
             "command": "$HOME/.claude/omnihook-src/ensure_omnihook.sh",
-            "once": true,
             "timeout": 15
-          }
-        ]
-      },
-      {
-        "matcher": "startup|resume",
-        "hooks": [
-          {
-            "type": "http",
-            "url": "http://127.0.0.1:9100/hook"
           }
         ]
       }
