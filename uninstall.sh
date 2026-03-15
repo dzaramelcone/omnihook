@@ -79,9 +79,6 @@ _clean_settings "$HOME/.claude/settings.json" "global"
 _clean_settings ".claude/settings.json" "project"
 _clean_settings ".claude/settings.local.json" "project local"
 
-echo "==> Removing launcher hooks..."
-rm -f ".claude/hooks/ensure_omnihook.sh" 2>/dev/null && echo "    Removed .claude/hooks/ensure_omnihook.sh" || true
-
 echo "==> Removing state directory..."
 rm -rf "$STATE_DIR" && echo "    Removed $STATE_DIR"
 

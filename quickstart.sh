@@ -5,8 +5,6 @@ set -e
 
 REPO="${OMNIHOOK_REPO:-https://github.com/dzaramelcone/omnihook.git}"
 INSTALL_DIR="$HOME/.claude/omnihook-src"
-HOOKS_DIR=".claude/hooks"
-SETTINGS=".claude/settings.json"
 PORT="${OMNIHOOK_PORT:-9100}"
 
 echo "==> Installing omnihook..."
@@ -18,55 +16,49 @@ else
     git clone -q "$REPO" "$INSTALL_DIR"
 fi
 
-# No global install needed — we run directly from the source via uv
+echo "==> Configuring hooks..."
 
-echo "==> Setting up launcher hook..."
-
-mkdir -p "$HOOKS_DIR"
-cp "$INSTALL_DIR/ensure_omnihook.sh" "$HOOKS_DIR/ensure_omnihook.sh"
-chmod +x "$HOOKS_DIR/ensure_omnihook.sh"
-
-# Merge hooks into settings.json
+# Write settings to GLOBAL ~/.claude/settings.json (not CWD-relative)
+SETTINGS="$HOME/.claude/settings.json"
 if [[ -f "$SETTINGS" ]]; then
-    # Backup existing
     cp "$SETTINGS" "${SETTINGS}.bak"
-    echo "    Backed up existing $SETTINGS to ${SETTINGS}.bak"
+    echo "    Backed up $SETTINGS"
 fi
 
-python3 -c "
-import json
-import copy
+python3 - "$SETTINGS" "$INSTALL_DIR/example-settings.json" "$PORT" "$INSTALL_DIR" <<'PYEOF'
+import json, sys, copy
 from pathlib import Path
 
-settings_path = Path('$SETTINGS')
-example_path = Path('$INSTALL_DIR/example-settings.json')
-port = '$PORT'
+settings_path = Path(sys.argv[1])
+example_path = Path(sys.argv[2])
+port = sys.argv[3]
+install_dir = sys.argv[4]
 
 existing = json.loads(settings_path.read_text()) if settings_path.exists() else {}
 example = json.loads(example_path.read_text())
 
-hooks = existing.setdefault('hooks', {})
-for event, configs in example['hooks'].items():
+hooks = existing.setdefault("hooks", {})
+for event, configs in example["hooks"].items():
     normalized = []
     for group in configs:
         group = copy.deepcopy(group)
-        for hook in group.get('hooks', []):
-            if hook.get('type') == 'http':
-                hook['url'] = f'http://127.0.0.1:{port}/hook'
-            if hook.get('type') == 'command' and 'ensure_omnihook.sh' in hook.get('command', ''):
-                hook['command'] = '\$CLAUDE_PROJECT_DIR/.claude/hooks/ensure_omnihook.sh'
+        for hook in group.get("hooks", []):
+            if hook.get("type") == "http":
+                hook["url"] = f"http://127.0.0.1:{port}/hook"
+            if hook.get("type") == "command" and "ensure_omnihook.sh" in hook.get("command", ""):
+                hook["command"] = f"{install_dir}/ensure_omnihook.sh"
         normalized.append(group)
     if event not in hooks:
         hooks[event] = normalized
 
-allowed = existing.setdefault('allowedHttpHookUrls', [])
-url = 'http://127.0.0.1:$PORT/*'
+allowed = existing.setdefault("allowedHttpHookUrls", [])
+url = f"http://127.0.0.1:{port}/*"
 if url not in allowed:
     allowed.append(url)
 
 settings_path.parent.mkdir(parents=True, exist_ok=True)
-settings_path.write_text(json.dumps(existing, indent=2) + '\n')
-"
+settings_path.write_text(json.dumps(existing, indent=2) + "\n")
+PYEOF
 
 echo "==> Pre-building environment..."
 cd "$INSTALL_DIR"

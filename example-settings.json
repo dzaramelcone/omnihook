@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/ensure_omnihook.sh",
+            "command": "$HOME/.claude/omnihook-src/ensure_omnihook.sh",
             "once": true,
             "timeout": 15
           }

@@ -32,7 +32,7 @@ cd ~/.claude/omnihook-src
 uv run python -m omnihook   # starts on :9100
 ```
 
-Then copy `example-settings.json` into `.claude/settings.json` and `ensure_omnihook.sh` into `.claude/hooks/`.
+Then merge `example-settings.json` into `~/.claude/settings.json`.
 
 ### Uninstall
 
