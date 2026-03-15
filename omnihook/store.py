@@ -217,8 +217,7 @@ def cleanup_stale():
         updated = datetime.fromisoformat(s.updated_at)
         if (now - updated).total_seconds() > _STALE_HOURS * 3600:
             p.unlink()
-            lock_path = p.with_suffix(".lock")
-            lock_path.unlink(missing_ok=True)
+            # Lock files left behind — see delete_session comment
 
 
 # --- Rate limiting ---

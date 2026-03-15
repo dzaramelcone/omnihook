@@ -7,6 +7,11 @@ REGISTRY maps handler names → callables. All public functions in handlers.py a
 auto-registered. The MACHINE references handlers by object identity at init, but
 the /ctl/machine API rewires it by name from REGISTRY — no restart required.
 
+Concurrency model: MACHINE, LIFECYCLE, and REGISTRY are replaced atomically
+(single reference swap) on every mutation. The hot path (transition) snapshots
+the reference at entry, so it always sees a consistent view — either all-old
+or all-new, never partial.
+
 Transition semantics (Temporal-inspired):
   1. Load session state from durable store
   2. Look up handler for (current_state, event)
@@ -30,6 +35,9 @@ from .models import HookInput, SessionState
 log = logging.getLogger("omnihook")
 
 Handler = Callable[[SessionState, HookInput], tuple[str | None, dict]]
+
+# Names of handlers that only do a transition (re-dispatch target event after)
+_TRANSITION_ONLY = frozenset({"activate", "passthrough"})
 
 
 def _scan_handlers() -> dict[str, Handler]:
@@ -67,29 +75,32 @@ _DEFAULT_LAYOUT: dict[str, dict[str, str]] = {
     },
 }
 
-MACHINE: dict[str, dict[str, Handler]] = {
-    state: {event: _resolve(name) for event, name in handlers.items()}
-    for state, handlers in _DEFAULT_LAYOUT.items()
-}
-
-# Lifecycle hooks: {state: {"on_enter": handler, "on_exit": handler}}
-# Fired on state transitions — on_exit(old_state) then on_enter(new_state).
-# Same handler signature as event handlers.
 _DEFAULT_LIFECYCLE: dict[str, dict[str, str]] = {
     "active": {"on_enter": "greet"},
 }
 
-LIFECYCLE: dict[str, dict[str, Handler]] = {
-    state: {hook: _resolve(name) for hook, name in hooks.items()}
-    for state, hooks in _DEFAULT_LIFECYCLE.items()
-}
+
+def _safe_resolve(name: str) -> Handler:
+    """Resolve a handler name, falling back to passthrough for unknown names."""
+    return REGISTRY.get(name, h.passthrough)
+
+
+def _build(layout: dict[str, dict[str, str]]) -> dict[str, dict[str, Handler]]:
+    """Build a handler dict from a name-based layout. Unknown names → passthrough."""
+    return {
+        state: {key: _safe_resolve(name) for key, name in handlers.items()}
+        for state, handlers in layout.items()
+    }
+
+
+MACHINE: dict[str, dict[str, Handler]] = _build(_DEFAULT_LAYOUT)
+LIFECYCLE: dict[str, dict[str, Handler]] = _build(_DEFAULT_LIFECYCLE)
 
 
 def _safe_call(
     handler: Handler, session: SessionState, inp: HookInput
 ) -> tuple[str | None, dict]:
     """Call a handler with failure containment. On error, return passthrough + error message."""
-
     try:
         return handler(session, inp)
     except Exception as e:
@@ -105,19 +116,22 @@ def _safe_call(
 
 
 def _apply_transition(
-    session: SessionState, inp: HookInput, next_state: str, output: dict
+    session: SessionState,
+    inp: HookInput,
+    next_state: str,
+    output: dict,
+    lifecycle: dict[str, dict[str, Handler]],
 ) -> dict:
     """Apply a state transition: fire on_exit, update state, fire on_enter, merge outputs."""
     old_state = session.state
     if next_state == old_state:
-        session.state = next_state
         return output
-    exit_handler = LIFECYCLE.get(old_state, {}).get("on_exit")
+    exit_handler = lifecycle.get(old_state, {}).get("on_exit")
     if exit_handler:
         _, exit_output = _safe_call(exit_handler, session, inp)
         output = {**output, **exit_output}
     session.state = next_state
-    enter_handler = LIFECYCLE.get(next_state, {}).get("on_enter")
+    enter_handler = lifecycle.get(next_state, {}).get("on_enter")
     if enter_handler:
         _, enter_output = _safe_call(enter_handler, session, inp)
         output = {**output, **enter_output}
@@ -127,26 +141,34 @@ def _apply_transition(
 def transition(session: SessionState, inp: HookInput) -> tuple[SessionState, dict]:
     """Execute one state machine step. Returns (updated session, response dict).
 
-    If the handler triggers a state change, lifecycle hooks fire (on_exit → on_enter).
-    After transitioning, the event is re-dispatched in the new state so the correct
-    handler runs (e.g. idle → active, then active's guard_secrets for PreToolUse).
+    Snapshots MACHINE and LIFECYCLE at entry for a consistent view —
+    concurrent mutations swap the module globals atomically (single reference),
+    so in-flight transitions always see either all-old or all-new.
     """
-    state_handlers = MACHINE.get(session.state, {})
+    # Snapshot references — immune to concurrent swaps
+    machine = MACHINE
+    lifecycle = LIFECYCLE
+
+    state_handlers = machine.get(session.state, {})
     handler = state_handlers.get(inp.hook_event_name)
+    handler_name = getattr(handler, "__name__", None) if handler else None
     if handler is None:
         log.debug(
-            "no handler for (%s, %s) — passthrough", session.state, inp.hook_event_name
+            "no handler for (%s, %s) — passthrough",
+            session.state,
+            inp.hook_event_name,
         )
         handler = h.passthrough
+        handler_name = "passthrough"
     next_state, output = _safe_call(handler, session, inp)
 
     if next_state is not None:
-        output = _apply_transition(session, inp, next_state, output)
+        output = _apply_transition(session, inp, next_state, output, lifecycle)
 
         # Re-dispatch: if the handler only did a transition (e.g. activate),
         # run the real handler in the new state
-        if handler in (h.activate, h.passthrough):
-            new_handlers = MACHINE.get(session.state, {})
+        if handler_name in _TRANSITION_ONLY:
+            new_handlers = machine.get(session.state, {})
             real_handler = new_handlers.get(inp.hook_event_name)
             if real_handler and real_handler is not handler:
                 _, real_output = _safe_call(real_handler, session, inp)
@@ -156,6 +178,8 @@ def transition(session: SessionState, inp: HookInput) -> tuple[SessionState, dic
 
 
 # --- Runtime mutation ---
+# All mutations build new dicts and swap the module global in one shot.
+# The hot path (transition) snapshots the reference at entry.
 
 
 def _fn_to_name_map() -> dict[int, str]:
@@ -186,16 +210,15 @@ def _persist():
     save_machine_layout(snapshot(), lifecycle_snapshot())
 
 
-def _safe_resolve(name: str) -> Handler:
-    """Resolve a handler name, falling back to passthrough for unknown names."""
-    return REGISTRY.get(name, h.passthrough)
+def _swap_machine(new: dict[str, dict[str, Handler]]):
+    """Atomically swap MACHINE contents. Concurrent readers see old or new, never partial."""
+    global MACHINE
+    MACHINE = new
 
 
-def _rebuild(target: dict, layout: dict[str, dict[str, str]]):
-    """Rebuild a handler dict from a name-based layout. Unknown names → passthrough."""
-    target.clear()
-    for state, handlers in layout.items():
-        target[state] = {key: _safe_resolve(name) for key, name in handlers.items()}
+def _swap_lifecycle(new: dict[str, dict[str, Handler]]):
+    global LIFECYCLE
+    LIFECYCLE = new
 
 
 def load_persisted():
@@ -204,7 +227,6 @@ def load_persisted():
     Unknown handler names fall back to passthrough (not crash).
     Corrupt machine.json is quarantined.
     """
-
     from .store import load_machine_layout
 
     try:
@@ -218,36 +240,43 @@ def load_persisted():
         return
 
     if machine_layout is not None:
-        _rebuild(MACHINE, machine_layout)
+        _swap_machine(_build(machine_layout))
     if lifecycle_layout:
-        _rebuild(LIFECYCLE, lifecycle_layout)
+        _swap_lifecycle(_build(lifecycle_layout))
 
 
 def set_handler(state: str, event: str, handler_name: str):
     """Rewire a single (state, event) → handler by name. Creates the state if missing."""
     reload_handlers()
     fn = _resolve(handler_name)
-    MACHINE.setdefault(state, {})[event] = fn
+    new = {s: dict(h) for s, h in MACHINE.items()}
+    new.setdefault(state, {})[event] = fn
+    _swap_machine(new)
     _persist()
 
 
 def remove_handler(state: str, event: str):
     """Remove a handler. The event will fall through to passthrough."""
-    if state in MACHINE:
-        MACHINE[state].pop(event, None)
+    new = {s: dict(h) for s, h in MACHINE.items()}
+    if state in new:
+        new[state].pop(event, None)
+    _swap_machine(new)
     _persist()
 
 
 def add_state(state: str, handlers: dict[str, str]):
     """Add an entire state with {event: handler_name} mapping."""
     reload_handlers()
-    MACHINE[state] = {event: _resolve(name) for event, name in handlers.items()}
+    new = {s: dict(h) for s, h in MACHINE.items()}
+    new[state] = {event: _resolve(name) for event, name in handlers.items()}
+    _swap_machine(new)
     _persist()
 
 
 def remove_state(state: str):
     """Remove a state entirely. Sessions in this state will fall through to passthrough."""
-    MACHINE.pop(state, None)
+    new = {s: dict(h) for s, h in MACHINE.items() if s != state}
+    _swap_machine(new)
     _persist()
 
 
@@ -255,19 +284,23 @@ def set_lifecycle(state: str, hook: str, handler_name: str):
     """Set a lifecycle hook: hook must be 'on_enter' or 'on_exit'."""
     reload_handlers()
     fn = _resolve(handler_name)
-    LIFECYCLE.setdefault(state, {})[hook] = fn
+    new = {s: dict(h) for s, h in LIFECYCLE.items()}
+    new.setdefault(state, {})[hook] = fn
+    _swap_lifecycle(new)
     _persist()
 
 
 def remove_lifecycle(state: str, hook: str | None = None):
     """Remove lifecycle hook(s) for a state. If hook is None, remove all."""
-    if state in LIFECYCLE:
+    new = {s: dict(h) for s, h in LIFECYCLE.items()}
+    if state in new:
         if hook:
-            LIFECYCLE[state].pop(hook, None)
-            if not LIFECYCLE[state]:
-                del LIFECYCLE[state]
+            new[state].pop(hook, None)
+            if not new[state]:
+                del new[state]
         else:
-            del LIFECYCLE[state]
+            del new[state]
+    _swap_lifecycle(new)
     _persist()
 
 
@@ -276,21 +309,21 @@ def reset_machine():
     from .store import clear_machine_layout
 
     reload_handlers()
-    _rebuild(MACHINE, _DEFAULT_LAYOUT)
-    _rebuild(LIFECYCLE, _DEFAULT_LIFECYCLE)
+    _swap_machine(_build(_DEFAULT_LAYOUT))
+    _swap_lifecycle(_build(_DEFAULT_LIFECYCLE))
     clear_machine_layout()
 
 
 def reload_handlers():
     """Hot-reload handlers.py module and re-scan REGISTRY.
 
-    New/changed functions become available immediately. Existing MACHINE
-    and LIFECYCLE entries are re-linked by name to fresh function objects.
+    New/changed functions become available immediately. MACHINE and LIFECYCLE
+    are rebuilt from their current name-based snapshots with fresh function objects.
     """
+    global REGISTRY
     current_machine = snapshot()
     current_lifecycle = lifecycle_snapshot()
     importlib.reload(h)
-    REGISTRY.clear()
-    REGISTRY.update(_scan_handlers())
-    _rebuild(MACHINE, current_machine)
-    _rebuild(LIFECYCLE, current_lifecycle)
+    REGISTRY = _scan_handlers()
+    _swap_machine(_build(current_machine))
+    _swap_lifecycle(_build(current_lifecycle))

@@ -7,6 +7,7 @@ durably persisted before each response (crash-proof).
 
 import ast
 import logging
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -220,6 +221,7 @@ def get_lifecycle():
 # --- Handler source management ---
 
 _HANDLERS_PATH = Path(__file__).parent / "handlers.py"
+_HANDLERS_LOCK = threading.Lock()
 
 
 def _validate_handler_source(source: str) -> tuple[str | None, str]:
@@ -259,10 +261,13 @@ def post_handler(body: dict):
     if err:
         return JSONResponse({"error": err}, 422)
 
-    new_content = _HANDLERS_PATH.read_text().rstrip() + "\n\n\n" + source.strip() + "\n"
-    err = _write_handlers_and_reload(new_content)
-    if err:
-        return JSONResponse({"error": f"reload failed, rolled back: {err}"}, 422)
+    with _HANDLERS_LOCK:
+        new_content = (
+            _HANDLERS_PATH.read_text().rstrip() + "\n\n\n" + source.strip() + "\n"
+        )
+        err = _write_handlers_and_reload(new_content)
+        if err:
+            return JSONResponse({"error": f"reload failed, rolled back: {err}"}, 422)
     return {"added": name, "registry": sorted(REGISTRY)}
 
 
@@ -272,32 +277,33 @@ def delete_handler_source(name: str):
     if name.startswith("_"):
         return JSONResponse({"error": "cannot remove private functions"}, 400)
 
-    source = _HANDLERS_PATH.read_text()
-    tree = ast.parse(source)
-    lines = source.splitlines(keepends=True)
+    with _HANDLERS_LOCK:
+        source = _HANDLERS_PATH.read_text()
+        tree = ast.parse(source)
+        lines = source.splitlines(keepends=True)
 
-    target = None
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            target = node
-            break
+        target = None
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == name:
+                target = node
+                break
 
-    if target is None:
-        return JSONResponse({"error": f"handler {name!r} not found"}, 404)
+        if target is None:
+            return JSONResponse({"error": f"handler {name!r} not found"}, 404)
 
-    start = target.lineno - 1
-    end = len(lines)
-    for node in tree.body:
-        if node.lineno > target.end_lineno:
-            end = node.lineno - 1
-            while end > start and lines[end - 1].strip() == "":
-                end -= 1
-            break
+        start = target.lineno - 1
+        end = len(lines)
+        for node in tree.body:
+            if node.lineno > target.end_lineno:
+                end = node.lineno - 1
+                while end > start and lines[end - 1].strip() == "":
+                    end -= 1
+                break
 
-    kept = lines[:start] + lines[end:]
-    err = _write_handlers_and_reload("".join(kept))
-    if err:
-        return JSONResponse({"error": f"reload failed, rolled back: {err}"}, 422)
+        kept = lines[:start] + lines[end:]
+        err = _write_handlers_and_reload("".join(kept))
+        if err:
+            return JSONResponse({"error": f"reload failed, rolled back: {err}"}, 422)
     return {"removed": name, "registry": sorted(REGISTRY)}
 
 
