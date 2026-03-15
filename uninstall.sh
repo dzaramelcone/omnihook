@@ -3,7 +3,7 @@
 # Usage: curl -fsSL https://raw.githubusercontent.com/dzaramelcone/omnihook/main/uninstall.sh | bash
 set -e
 
-PORT=9100
+PORT="${OMNIHOOK_PORT:-9100}"
 PID_FILE="$HOME/.claude/omnihook/omnihook.pid"
 INSTALL_DIR="$HOME/.claude/omnihook-src"
 STATE_DIR="$HOME/.claude/omnihook"
@@ -30,6 +30,7 @@ from pathlib import Path
 
 p = Path('$SETTINGS')
 s = json.loads(p.read_text())
+port = '$PORT'
 hooks = s.get('hooks', {})
 changed = False
 
@@ -54,7 +55,8 @@ for event in list(hooks.keys()):
 
 # Remove allowedHttpHookUrls entry
 allowed = s.get('allowedHttpHookUrls', [])
-new_allowed = [u for u in allowed if '9100' not in u]
+needle = f'127.0.0.1:{port}'
+new_allowed = [u for u in allowed if needle not in u]
 if len(new_allowed) != len(allowed):
     s['allowedHttpHookUrls'] = new_allowed
     changed = True

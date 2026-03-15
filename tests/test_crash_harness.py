@@ -13,7 +13,6 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 HANDLERS_PATH = ROOT / "omnihook" / "handlers.py"
 
@@ -153,11 +152,13 @@ class LiveServer:
 
 class CrashHarnessTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._handlers_backup = HANDLERS_PATH.read_text()
         self.server = LiveServer()
         self.server.start()
 
     def tearDown(self) -> None:
         self.server.cleanup()
+        HANDLERS_PATH.write_text(self._handlers_backup)
 
     def test_sigkill_restart_preserves_session_state(self) -> None:
         start = self.server.request(

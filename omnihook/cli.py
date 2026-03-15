@@ -27,7 +27,9 @@ BASE = f"http://{_host}:{_port}"
 def _req(method: str, path: str, body: dict | None = None) -> dict | str:
     data = json.dumps(body).encode() if body else None
     headers = {"Content-Type": "application/json"} if data else {}
-    req = urllib.request.Request(f"{BASE}{path}", data=data, headers=headers, method=method)
+    req = urllib.request.Request(
+        f"{BASE}{path}", data=data, headers=headers, method=method
+    )
     try:
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read())

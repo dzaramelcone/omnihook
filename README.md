@@ -179,6 +179,12 @@ Run them with:
 uv run python -m unittest tests.test_crash_harness -v
 ```
 
+There is also an install/uninstall UAT in `tests/test_uat_isolation.py` that runs `quickstart.sh` and `uninstall.sh` inside isolated `/tmp` directories with a fake `claude` binary:
+
+```bash
+uv run python -m unittest tests.test_uat_isolation -v
+```
+
 ## License
 
 MIT

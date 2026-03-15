@@ -2,7 +2,7 @@
 # SessionStart hook: ensure omnihook is running. Idempotent — safe to call repeatedly.
 set -e
 
-PORT=9100
+PORT="${OMNIHOOK_PORT:-9100}"
 PID_FILE="$HOME/.claude/omnihook/omnihook.pid"
 LOG_FILE="$HOME/.claude/omnihook/omnihook.log"
 
@@ -25,15 +25,16 @@ if [[ ! -d "$OMNIHOOK_DIR" ]]; then
     exit 1
 fi
 cd "$OMNIHOOK_DIR"
+uv sync --quiet 2>>"$LOG_FILE"
 nohup uv run omnihook-server >> "$LOG_FILE" 2>&1 &
 
-# Wait for health (up to 5s)
-for _ in $(seq 1 20); do
+# Wait for health (up to 10s)
+for _ in $(seq 1 40); do
     if curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
         exit 0
     fi
     sleep 0.25
 done
 
-echo "omnihook failed to start within 5s" >&2
+echo "omnihook failed to start within 10s" >&2
 exit 1
