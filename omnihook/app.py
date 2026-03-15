@@ -28,6 +28,7 @@ from .machine import (
     transition,
 )
 from .models import HookInput, RateLimit
+from .store import _atomic_write as _atomic_write_path
 from .store import (
     check_rate_limit,
     cleanup_stale,
@@ -257,15 +258,14 @@ def post_handler(body: dict):
     if err:
         return JSONResponse({"error": err}, 422)
 
-    # Backup before modifying
+    # Atomic: build new content, write via atomic_write, reload, rollback on failure
     backup = _HANDLERS_PATH.read_text()
-    with _HANDLERS_PATH.open("a") as f:
-        f.write("\n\n" + source.strip() + "\n")
+    new_content = backup.rstrip() + "\n\n\n" + source.strip() + "\n"
+    _atomic_write_path(_HANDLERS_PATH, new_content)
 
     err = _safe_reload()
     if err:
-        # Rollback
-        _HANDLERS_PATH.write_text(backup)
+        _atomic_write_path(_HANDLERS_PATH, backup)
         _safe_reload()
         return JSONResponse({"error": f"reload failed, rolled back: {err}"}, 422)
 
@@ -302,11 +302,11 @@ def delete_handler_source(name: str):
 
     backup = source
     kept = lines[:start] + lines[end:]
-    _HANDLERS_PATH.write_text("".join(kept))
+    _atomic_write_path(_HANDLERS_PATH, "".join(kept))
 
     err = _safe_reload()
     if err:
-        _HANDLERS_PATH.write_text(backup)
+        _atomic_write_path(_HANDLERS_PATH, backup)
         _safe_reload()
         return JSONResponse({"error": f"reload failed, rolled back: {err}"}, 422)
 

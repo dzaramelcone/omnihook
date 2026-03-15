@@ -81,9 +81,11 @@ def session_lock(session_id: str):
     lock_path = SESSIONS_DIR / f"{session_id}.lock"
     fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT)
     fcntl.flock(fd, fcntl.LOCK_EX)
-    yield
-    fcntl.flock(fd, fcntl.LOCK_UN)
-    os.close(fd)
+    try:
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 # --- Global config (cached in memory, invalidated on save) ---
