@@ -11,7 +11,7 @@ if [[ -f "$PID_FILE" ]]; then
     PID=$(cat "$PID_FILE")
     if kill -0 "$PID" 2>/dev/null; then
         if curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
-            echo "omnihook active on :$PORT — omnihook status | omnihook disable"
+            echo "[omnihook] active — omnihook status | omnihook disable | omnihook machine"
             exit 0
         fi
     fi
@@ -33,7 +33,7 @@ disown
 # Wait for health (up to 10s)
 for _ in $(seq 1 40); do
     if curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
-        echo "omnihook started on :$PORT — omnihook status | omnihook disable"
+        echo "[omnihook] started — omnihook status | omnihook disable | omnihook machine"
         exit 0
     fi
     sleep 0.25

@@ -75,15 +75,12 @@ def on_session_end(session: SessionState, inp: HookInput) -> tuple[str | None, d
 
 
 def greet(session: SessionState, inp: HookInput) -> tuple[str | None, dict]:
-    """on_enter for active: show a greeting on the first session after install."""
+    """on_enter for active: greet once per session."""
     if session.data.get("greeted"):
         return None, {}
     session.data["greeted"] = True
     return None, {
         "systemMessage": (
-            "[omnihook] hooks active — guards, lint, lifecycle running. "
-            "CLI: `omnihook status` to inspect, "
-            "`omnihook disable` to pause, "
-            "`omnihook machine` to see the state machine."
+            "[omnihook] hooks active — `omnihook status` | `omnihook disable` | `omnihook machine`"
         ),
     }
