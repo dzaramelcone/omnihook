@@ -76,6 +76,7 @@ echo "==> Starting omnihook..."
 
 mkdir -p "$HOME/.claude/omnihook"
 nohup uv run omnihook-server >> "$HOME/.claude/omnihook/omnihook.log" 2>&1 &
+disown
 
 # Wait for health (up to 10s)
 for _ in $(seq 1 40); do

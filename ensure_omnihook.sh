@@ -27,6 +27,7 @@ fi
 cd "$OMNIHOOK_DIR"
 uv sync --quiet 2>>"$LOG_FILE"
 nohup uv run omnihook-server >> "$LOG_FILE" 2>&1 &
+disown
 
 # Wait for health (up to 10s)
 for _ in $(seq 1 40); do
