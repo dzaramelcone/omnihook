@@ -72,9 +72,14 @@ MACHINE: dict[str, dict[str, Handler]] = {
 # Lifecycle hooks: {state: {"on_enter": handler, "on_exit": handler}}
 # Fired on state transitions — on_exit(old_state) then on_enter(new_state).
 # Same handler signature as event handlers.
-LIFECYCLE: dict[str, dict[str, Handler]] = {}
+_DEFAULT_LIFECYCLE: dict[str, dict[str, str]] = {
+    "active": {"on_enter": "greet"},
+}
 
-_DEFAULT_LIFECYCLE: dict[str, dict[str, str]] = {}
+LIFECYCLE: dict[str, dict[str, Handler]] = {
+    state: {hook: _resolve(name) for hook, name in hooks.items()}
+    for state, hooks in _DEFAULT_LIFECYCLE.items()
+}
 
 
 def transition(session: SessionState, inp: HookInput) -> tuple[SessionState, dict]:

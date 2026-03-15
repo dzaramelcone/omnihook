@@ -67,8 +67,8 @@ nohup uv run python -m omnihook >> "$HOME/.claude/omnihook/omnihook.log" 2>&1 &
 for _ in $(seq 1 20); do
     if curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
         echo "==> omnihook running on :$PORT"
-        echo "    Open Claude Code — hooks are active."
-        exit 0
+        echo "==> Launching Claude Code..."
+        exec claude
     fi
     sleep 0.25
 done

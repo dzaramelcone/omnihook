@@ -69,5 +69,16 @@ def on_session_end(session: SessionState, inp: HookInput) -> tuple[str | None, d
     return "ended", {}
 
 
-
-
+def greet(session: SessionState, inp: HookInput) -> tuple[str | None, dict]:
+    """on_enter for active: show a greeting on the first session after install."""
+    if session.data.get("greeted"):
+        return None, {}
+    session.data["greeted"] = True
+    return None, {
+        "systemMessage": (
+            "[omnihook] hooks active — "
+            "guards, lint, lifecycle running. "
+            "GET :9100/ctl/status for state, "
+            "POST :9100/ctl/disable to pause."
+        ),
+    }
