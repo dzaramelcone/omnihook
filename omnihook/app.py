@@ -65,7 +65,6 @@ def handle_hook(inp: HookInput) -> dict:
             return {}
 
         if not check_rate_limit(session, config.rate_limit):
-            save_session(session)
             return {
                 "systemMessage": (
                     "[omnihook] rate limited — hooks paused until window resets. "

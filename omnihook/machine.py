@@ -21,10 +21,13 @@ re-executes on the next hook call. Handlers MUST be idempotent.
 
 import importlib
 import inspect
+import logging
 from collections.abc import Callable
 
 from . import handlers as h
 from .models import HookInput, SessionState
+
+log = logging.getLogger("omnihook")
 
 Handler = Callable[[SessionState, HookInput], tuple[str | None, dict]]
 
@@ -86,13 +89,12 @@ def _safe_call(
     handler: Handler, session: SessionState, inp: HookInput
 ) -> tuple[str | None, dict]:
     """Call a handler with failure containment. On error, return passthrough + error message."""
-    import logging
 
     try:
         return handler(session, inp)
     except Exception as e:
         fn_name = getattr(handler, "__name__", "?")
-        logging.getLogger("omnihook").error("handler %s raised: %s", fn_name, e)
+        log.error("handler %s raised: %s", fn_name, e)
         return None, {
             "systemMessage": (
                 f"[omnihook] handler '{fn_name}' failed: {e}. "
@@ -111,7 +113,12 @@ def transition(session: SessionState, inp: HookInput) -> tuple[SessionState, dic
     """
     old_state = session.state
     state_handlers = MACHINE.get(session.state, {})
-    handler = state_handlers.get(inp.hook_event_name, h.passthrough)
+    handler = state_handlers.get(inp.hook_event_name)
+    if handler is None:
+        log.debug(
+            "no handler for (%s, %s) — passthrough", session.state, inp.hook_event_name
+        )
+        handler = h.passthrough
     next_state, output = _safe_call(handler, session, inp)
 
     if next_state is not None and next_state != old_state:
@@ -179,16 +186,13 @@ def load_persisted():
     Unknown handler names fall back to passthrough (not crash).
     Corrupt machine.json is quarantined.
     """
-    import logging
 
     from .store import load_machine_layout
 
     try:
         machine_layout, lifecycle_layout = load_machine_layout()
     except Exception as e:
-        logging.getLogger("omnihook").error(
-            "corrupt machine.json, using defaults: %s", e
-        )
+        log.error("corrupt machine.json, using defaults: %s", e)
         from .store import MACHINE_PATH, _quarantine
 
         if MACHINE_PATH.exists():

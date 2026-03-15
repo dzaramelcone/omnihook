@@ -173,8 +173,10 @@ def save_session(session: SessionState):
 def delete_session(session_id: str):
     path = SESSIONS_DIR / f"{session_id}.json"
     path.unlink(missing_ok=True)
-    lock_path = SESSIONS_DIR / f"{session_id}.lock"
-    lock_path.unlink(missing_ok=True)
+    # Lock files are left behind intentionally — deleting while the lock
+    # is held by session_lock() creates a race where a concurrent request
+    # can create a new lock file and bypass mutual exclusion. Stale lock
+    # files are cleaned up by cleanup_stale().
 
 
 def list_sessions() -> list[SessionState]:
