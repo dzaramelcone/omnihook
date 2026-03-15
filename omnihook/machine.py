@@ -27,6 +27,7 @@ re-executes on the next hook call. Handlers MUST be idempotent.
 import importlib
 import inspect
 import logging
+import threading
 from collections.abc import Callable
 
 from . import handlers as h
@@ -95,6 +96,10 @@ def _build(layout: dict[str, dict[str, str]]) -> dict[str, dict[str, Handler]]:
 
 MACHINE: dict[str, dict[str, Handler]] = _build(_DEFAULT_LAYOUT)
 LIFECYCLE: dict[str, dict[str, Handler]] = _build(_DEFAULT_LIFECYCLE)
+
+# Serializes all mutations to MACHINE/LIFECYCLE/REGISTRY.
+# Readers (transition) don't need the lock — they snapshot the reference at entry.
+_MUTATION_LOCK = threading.RLock()
 
 
 def _safe_call(
@@ -247,71 +252,78 @@ def load_persisted():
 
 def set_handler(state: str, event: str, handler_name: str):
     """Rewire a single (state, event) → handler by name. Creates the state if missing."""
-    reload_handlers()
-    fn = _resolve(handler_name)
-    new = {s: dict(h) for s, h in MACHINE.items()}
-    new.setdefault(state, {})[event] = fn
-    _swap_machine(new)
-    _persist()
+    with _MUTATION_LOCK:
+        reload_handlers()
+        fn = _resolve(handler_name)
+        new = {s: dict(h) for s, h in MACHINE.items()}
+        new.setdefault(state, {})[event] = fn
+        _swap_machine(new)
+        _persist()
 
 
 def remove_handler(state: str, event: str):
     """Remove a handler. The event will fall through to passthrough."""
-    new = {s: dict(h) for s, h in MACHINE.items()}
-    if state in new:
-        new[state].pop(event, None)
-    _swap_machine(new)
-    _persist()
+    with _MUTATION_LOCK:
+        new = {s: dict(h) for s, h in MACHINE.items()}
+        if state in new:
+            new[state].pop(event, None)
+        _swap_machine(new)
+        _persist()
 
 
 def add_state(state: str, handlers: dict[str, str]):
     """Add an entire state with {event: handler_name} mapping."""
-    reload_handlers()
-    new = {s: dict(h) for s, h in MACHINE.items()}
-    new[state] = {event: _resolve(name) for event, name in handlers.items()}
-    _swap_machine(new)
-    _persist()
+    with _MUTATION_LOCK:
+        reload_handlers()
+        new = {s: dict(h) for s, h in MACHINE.items()}
+        new[state] = {event: _resolve(name) for event, name in handlers.items()}
+        _swap_machine(new)
+        _persist()
 
 
 def remove_state(state: str):
     """Remove a state entirely. Sessions in this state will fall through to passthrough."""
-    new = {s: dict(h) for s, h in MACHINE.items() if s != state}
-    _swap_machine(new)
-    _persist()
+    with _MUTATION_LOCK:
+        new = {s: dict(h) for s, h in MACHINE.items() if s != state}
+        _swap_machine(new)
+        _persist()
 
 
 def set_lifecycle(state: str, hook: str, handler_name: str):
     """Set a lifecycle hook: hook must be 'on_enter' or 'on_exit'."""
-    reload_handlers()
-    fn = _resolve(handler_name)
-    new = {s: dict(h) for s, h in LIFECYCLE.items()}
-    new.setdefault(state, {})[hook] = fn
-    _swap_lifecycle(new)
-    _persist()
+    with _MUTATION_LOCK:
+        reload_handlers()
+        fn = _resolve(handler_name)
+        new = {s: dict(h) for s, h in LIFECYCLE.items()}
+        new.setdefault(state, {})[hook] = fn
+        _swap_lifecycle(new)
+        _persist()
 
 
 def remove_lifecycle(state: str, hook: str | None = None):
     """Remove lifecycle hook(s) for a state. If hook is None, remove all."""
-    new = {s: dict(h) for s, h in LIFECYCLE.items()}
-    if state in new:
-        if hook:
-            new[state].pop(hook, None)
-            if not new[state]:
+    with _MUTATION_LOCK:
+        new = {s: dict(h) for s, h in LIFECYCLE.items()}
+        if state in new:
+            if hook:
+                new[state].pop(hook, None)
+                if not new[state]:
+                    del new[state]
+            else:
                 del new[state]
-        else:
-            del new[state]
-    _swap_lifecycle(new)
-    _persist()
+        _swap_lifecycle(new)
+        _persist()
 
 
 def reset_machine():
     """Reset MACHINE + LIFECYCLE to hardcoded defaults."""
     from .store import clear_machine_layout
 
-    reload_handlers()
-    _swap_machine(_build(_DEFAULT_LAYOUT))
-    _swap_lifecycle(_build(_DEFAULT_LIFECYCLE))
-    clear_machine_layout()
+    with _MUTATION_LOCK:
+        reload_handlers()
+        _swap_machine(_build(_DEFAULT_LAYOUT))
+        _swap_lifecycle(_build(_DEFAULT_LIFECYCLE))
+        clear_machine_layout()
 
 
 def reload_handlers():
@@ -319,6 +331,7 @@ def reload_handlers():
 
     New/changed functions become available immediately. MACHINE and LIFECYCLE
     are rebuilt from their current name-based snapshots with fresh function objects.
+    Must be called under _MUTATION_LOCK (all callers already hold it).
     """
     global REGISTRY
     current_machine = snapshot()
