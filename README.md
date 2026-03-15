@@ -16,13 +16,11 @@ Inspired by [Temporal](https://temporal.io)'s durable execution model.
 
 ## Quick start
 
-One command from your project root — installs omnihook, sets up the SessionStart bootstrap hook, merges settings, and starts the server:
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dzaramelcone/omnihook/main/quickstart.sh | bash
 ```
 
-Open Claude Code. Hooks are active.
+Then open Claude Code in any project. Hooks activate automatically on session start.
 
 ### Manual install
 
