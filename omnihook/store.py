@@ -6,10 +6,10 @@ via tmp+fsync+rename prevent partial state corruption. Per-session file locks
 serialize concurrent requests.
 """
 
-import fcntl
 import json
 import logging
 import os
+import sys
 import time
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -78,17 +78,35 @@ def _safe_parse_session(path: Path) -> SessionState | None:
 # --- Per-session file locking ---
 
 
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock(fd: int):
+        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+
+    def _unlock(fd: int):
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _lock(fd: int):
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+    def _unlock(fd: int):
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
 @contextmanager
 def session_lock(session_id: str):
     """Advisory file lock per session — serializes concurrent hook requests."""
     _ensure_dirs()
     lock_path = SESSIONS_DIR / f"{session_id}.lock"
     fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT)
-    fcntl.flock(fd, fcntl.LOCK_EX)
+    _lock(fd)
     try:
         yield
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        _unlock(fd)
         os.close(fd)
 
 

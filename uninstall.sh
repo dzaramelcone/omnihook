@@ -16,8 +16,10 @@ if [[ -f "$PID_FILE" ]]; then
     kill "$PID" 2>/dev/null && echo "    Stopped (pid $PID)" || echo "    Not running"
 fi
 
-# Also check port
-lsof -ti:"$PORT" 2>/dev/null | xargs kill 2>/dev/null || true
+# Also check port (lsof on Unix, netstat fallback)
+if command -v lsof &>/dev/null; then
+    lsof -ti:"$PORT" 2>/dev/null | xargs kill 2>/dev/null || true
+fi
 
 # --- Clean omnihook entries from settings files ---
 
